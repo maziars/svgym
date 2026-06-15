@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "svgym"
+version = "0.1.0"
+description = "SVG optimization that goes beyond SVGO — a deterministic, verifier-gated pipeline with an optional AI mode."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "lxml>=4.9",
+    "numpy>=1.24.0",
+    # Rendering + perceptual metrics are REQUIRED: the deterministic pipeline
+    # renders before/after each step and gates on SSIM/PSNR.
+    "cairosvg>=2.7",
+    "pillow>=10.0",
+    "scikit-image>=0.22",
+]
+
+[project.optional-dependencies]
+# Optional AI fallback mode — bring your own API key (Anthropic or Gemini).
+ai = ["anthropic>=0.39", "google-genai>=0.3.0", "python-dotenv>=1.0"]
+
+[project.scripts]
+svgym = "svgym.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["svgym*"]

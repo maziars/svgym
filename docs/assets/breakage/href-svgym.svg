@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <style>
+    .shape-light { fill: #A8C7FA; }
+    .shape-dark { fill: #1B6EF3; }
+    @media (prefers-color-scheme: dark) {
+      .shape-light { fill: #2D509E; }
+      .shape-dark { fill: #4185FF; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" orient="auto-start-reverse" markerWidth="6" markerHeight="6"
+            viewBox="0 0 10 10" refX="5" refY="5">
+      <path d="M0,0 L10,5 L0,10 z" fill="#333"/>
+    </marker>
+  </defs>
+
+  <animate href="#dot1" attributeName="cx" values="30;170;30" dur="3s" repeatCount="indefinite"/>
+  <animate href="#dot1" attributeName="fill-opacity" values="1;0.3;1" dur="3s" repeatCount="indefinite"/>
+  <circle id="dot1" cx="30" cy="50" r="12" class="shape-dark"/>
+
+  <animateTransform href="#spinner" attributeName="transform" type="rotate"
+                    from="0 100 130" to="360 100 130" dur="4s" repeatCount="indefinite"/>
+  <rect id="spinner" x="90" y="120" width="20" height="20" rx="3" class="shape-light"/>
+
+  <path d="M30,180 Q100,100 170,180" fill="none" stroke="#333" stroke-width="2"
+        style="marker-end: url(#arrow);"/>
+
+  <rect x="20" y="80" width="50" height="30" rx="6" class="shape-light"/>
+  <rect x="130" y="80" width="50" height="30" rx="6" class="shape-dark"/>
+</svg>
