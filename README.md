@@ -83,26 +83,75 @@ brew install cairo
 
 ## CLI usage
 
-Single file:
+Two commands: `optimize` (a single file) and `pack` (a folder).
+
+### `svgym optimize` — a single file
 
 ```bash
-svgym optimize icon.svg          # writes icon.min.svg
+svgym optimize icon.svg                 # → icon.min.svg (deterministic, conservative)
+svgym optimize icon.svg -o out.svg      # choose the output path
+svgym optimize hero.svg --level aggressive
+svgym optimize hero.svg --ai            # use the AI fallback on hard residuals
 ```
 
-Flags:
+| Flag | Meaning |
+|---|---|
+| `-o, --output PATH` | Output file (default: `<name>.min.svg`) |
+| `--level lossless\|conservative\|aggressive` | Quality gate (default `conservative`) |
+| `--ai` | Enable the AI fallback (needs a key; without it, fully offline) |
+| `--provider anthropic\|gemini` | AI provider for `--ai` (default from env / `.env`) |
+| `--model NAME` | AI model for `--ai` (overrides the provider's default) |
+| `--ai-threshold PCT` | With `--ai`, call the model only if the deterministic result is still below this % reduction beyond SVGO (default `30`) |
+| `--ai-size-gate BYTES` | With `--ai`, skip the model for files smaller than this (default `5120`) |
+| `-q, --quiet` | Suppress the summary line |
 
-- `-o out.svg` — output path
-- `--level conservative|aggressive|lossless` — default `conservative`
-- `--ai` — enable the AI fallback (needs a key)
-- `-q` — quiet
-
-A folder / pack (cross-file analysis + optional sprite sheet):
+### `svgym pack` — a folder of SVGs
 
 ```bash
 svgym pack ./icons/ -o ./dist/
+svgym pack ./icons/ --level aggressive --no-sprite
+svgym pack ./icons/ --json report.json
 ```
 
-Flags: `--level`, `--no-sprite`, `--json report.json`.
+A flat folder is treated as one pack; nested subfolders each become their own pack. Flags: `-o/--output`, `--level`, `--no-sprite` (skip the combined `<symbol>` sprite sheet), `--json FILE` (machine-readable report), `-q/--quiet`. `pack` runs the deterministic pipeline.
+
+### Quality levels
+
+- **`lossless`** — SSIM 1.0; structural transforms only (no coordinate rounding or curve simplification). Smallest gains, guaranteed identical.
+- **`conservative`** *(default)* — SSIM ≥ 0.99, PSNR ≥ 30 dB. Strong compression while visually identical.
+- **`aggressive`** — SSIM ≥ 0.97, PSNR ≥ 25 dB. Pushes harder (lower precision, more simplification, viewBox rescale); still gated so it won't visibly break.
+
+At every level, each step is rendered, verified against that level's bound, and reverted if it fails — that's the guarantee.
+
+### Choosing the AI (for `--ai`)
+
+The AI fallback is **optional** — without `--ai` everything runs deterministically, offline, and free. When you do use it, pick a provider (and optionally a model):
+
+- **Anthropic** (default): set `ANTHROPIC_API_KEY`, use `--provider anthropic`. Default model `claude-haiku-4-5` (cheap/fast). Override with `--model claude-…` or `ANTHROPIC_MODEL`.
+- **Gemini**: set `GEMINI_API_KEY`, use `--provider gemini`. Default model `gemini-2.5-flash` (very cheap). Override with `--model gemini-…` or `GEMINI_MODEL`.
+
+Keys and provider can live in a `.env` at the repo root, in environment variables, or via the flags:
+
+```bash
+# via env (key + provider in the shell or .env)
+GEMINI_API_KEY=… SVGYM_PROVIDER=gemini svgym optimize hero.svg --ai
+# via flags (key still from env / .env)
+svgym optimize hero.svg --ai --provider gemini --model gemini-2.5-flash
+```
+
+You'll also need the AI SDKs: `pip install -e .[ai]`.
+
+### Tuning when the AI kicks in
+
+The hybrid runs the deterministic pipeline first and only escalates to the model when there's headroom left. Two knobs control that decision:
+
+- `--ai-threshold PCT` (default `30`) — only call the model if the deterministic result is still below this % reduction beyond SVGO. Lower → calls the model less; higher → more.
+- `--ai-size-gate BYTES` (default `5120`) — never call the model for files smaller than this (tiny files rarely have headroom worth a request).
+
+```bash
+# only spend the model on stubborn, larger files
+svgym optimize big.svg --ai --ai-threshold 20 --ai-size-gate 10240
+```
 
 ## Library usage
 

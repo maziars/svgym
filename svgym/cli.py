@@ -19,14 +19,13 @@ import sys
 import time
 from pathlib import Path
 
+import os
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from svgym.pack import (
-    optimize_pack,
-    generate_sprite,
-    generate_report,
-    format_report_markdown,
-)
+# NOTE: heavy modules (svgym.pack / svgym.config / svgym.optimizer) are imported
+# lazily inside the command functions, so that --provider/--model can set the
+# relevant environment variables BEFORE svgym.config reads them at import time.
 
 
 def discover_packs(input_dir: Path) -> dict[str, list[tuple[str, str]]]:
@@ -58,6 +57,12 @@ def discover_packs(input_dir: Path) -> dict[str, list[tuple[str, str]]]:
 
 def run_pack(args: argparse.Namespace) -> int:
     """Run the pack optimization command."""
+    from svgym.pack import (
+        optimize_pack,
+        generate_sprite,
+        generate_report,
+        format_report_markdown,
+    )
     input_dir = Path(args.input).resolve()
     if not input_dir.is_dir():
         print(f"Error: {input_dir} is not a directory", file=sys.stderr)
@@ -159,8 +164,20 @@ def run_optimize(args: argparse.Namespace) -> int:
     orig = len(svg.encode("utf-8"))
 
     if args.ai:
+        # Provider/model must be set BEFORE importing the optimizer, because
+        # svgym.config reads these env vars at import time.
+        if args.provider:
+            os.environ["SVGYM_PROVIDER"] = args.provider
+        if args.model:
+            prov = args.provider or os.environ.get("SVGYM_PROVIDER", "anthropic")
+            os.environ["GEMINI_MODEL" if prov == "gemini" else "ANTHROPIC_MODEL"] = args.model
         from svgym.hybrid import optimize_svg_hybrid
-        result = optimize_svg_hybrid(svg, level=args.level)
+        result = optimize_svg_hybrid(
+            svg, level=args.level,
+            llm_threshold=args.ai_threshold,
+            size_gate=args.ai_size_gate,
+            original_size=orig,
+        )
         mode = "AI hybrid"
     else:
         from svgym.deterministic import optimize_svg_deterministic
@@ -244,6 +261,23 @@ def main():
     opt_parser.add_argument(
         "--ai", action="store_true",
         help="Enable the AI fallback (needs an API key in .env or environment)",
+    )
+    opt_parser.add_argument(
+        "--provider", choices=["anthropic", "gemini"],
+        help="AI provider for --ai (default: SVGYM_PROVIDER env / .env, else anthropic)",
+    )
+    opt_parser.add_argument(
+        "--model", metavar="NAME",
+        help="AI model name for --ai (overrides the provider's default model)",
+    )
+    opt_parser.add_argument(
+        "--ai-threshold", type=float, default=30.0, metavar="PCT",
+        help="With --ai: call the model only when the deterministic result is still "
+             "below this %% reduction beyond SVGO (default: 30)",
+    )
+    opt_parser.add_argument(
+        "--ai-size-gate", type=int, default=5120, metavar="BYTES",
+        help="With --ai: skip the model for files smaller than this (default: 5120)",
     )
     opt_parser.add_argument("-q", "--quiet", action="store_true", help="Suppress output")
 
