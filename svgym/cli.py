@@ -171,14 +171,19 @@ def run_optimize(args: argparse.Namespace) -> int:
         if args.model:
             prov = args.provider or os.environ.get("SVGYM_PROVIDER", "anthropic")
             os.environ["GEMINI_MODEL" if prov == "gemini" else "ANTHROPIC_MODEL"] = args.model
+        # --ai-always opens the escalation gate: run the model on every file,
+        # regardless of how much the deterministic pass already saved or how small
+        # the file is. (The smaller of {deterministic, model} is still returned.)
+        threshold = 100.0 if args.ai_always else args.ai_threshold
+        size_gate = 0 if args.ai_always else args.ai_size_gate
         from svgym.hybrid import optimize_svg_hybrid
         result = optimize_svg_hybrid(
             svg, level=args.level,
-            llm_threshold=args.ai_threshold,
-            size_gate=args.ai_size_gate,
+            llm_threshold=threshold,
+            size_gate=size_gate,
             original_size=orig,
         )
-        mode = "AI hybrid"
+        mode = "AI (always-on)" if args.ai_always else "AI hybrid"
     else:
         from svgym.deterministic import optimize_svg_deterministic
         result = optimize_svg_deterministic(svg, level=args.level)
@@ -278,6 +283,11 @@ def main():
     opt_parser.add_argument(
         "--ai-size-gate", type=int, default=5120, metavar="BYTES",
         help="With --ai: skip the model for files smaller than this (default: 5120)",
+    )
+    opt_parser.add_argument(
+        "--ai-always", action="store_true",
+        help="With --ai: run the model on every file (shorthand for "
+             "--ai-threshold 100 --ai-size-gate 0); overrides both",
     )
     opt_parser.add_argument("-q", "--quiet", action="store_true", help="Suppress output")
 

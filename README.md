@@ -28,7 +28,7 @@ A few deterministic-pipeline results (sizes vs the raw original and vs SVGO):
 
 SVGO is the ubiquitous baseline and a great tool, but it applies the same fixed rules to everything. SVGym goes further per-file, and it's safe because of the verification gate.
 
-On a 43-file benchmark (icons, glyphs, flags, emoji, illustrations, charts, sketches), SVGym's deterministic pipeline reduces size by ~30% beyond SVGO on the typical file (~35% size-weighted), holding SSIM ≥ 0.99. An optional AI mode adds a few more points on the hardest files; notably, the deterministic pipeline alone captures ~86% of what the AI mode achieves — so most users never need the AI.
+On the demo benchmark (icons, glyphs, flags, emoji, illustrations, charts, sketches), SVGym's deterministic pipeline reduces size by ~34% beyond SVGO on the typical file (56% versus the raw original), holding SSIM ≥ 0.99. The optional AI mode adds only a few points on the hardest files, lifting compression beyond SVGO to ~38%, so the deterministic pipeline alone captures ~91% of what the AI achieves, and most users never need the AI.
 
 These are benchmark figures on that file set, not guarantees.
 
@@ -103,6 +103,7 @@ svgym optimize hero.svg --ai            # use the AI fallback on hard residuals
 | `--model NAME` | AI model for `--ai` (overrides the provider's default) |
 | `--ai-threshold PCT` | With `--ai`, call the model only if the deterministic result is still below this % reduction beyond SVGO (default `30`) |
 | `--ai-size-gate BYTES` | With `--ai`, skip the model for files smaller than this (default `5120`) |
+| `--ai-always` | With `--ai`, run the model on *every* file (shorthand for `--ai-threshold 100 --ai-size-gate 0`) |
 | `-q, --quiet` | Suppress the summary line |
 
 ### `svgym pack` — a folder of SVGs
