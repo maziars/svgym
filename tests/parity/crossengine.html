@@ -1,0 +1,71 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>cross-engine SSIM judge</title>
+<script>
+// Renders two SVGs the same way the gate does (aspect-preserving, white,
+// square) and returns a windowed SSIM between them. Loaded in Chromium,
+// Firefox and WebKit by crossengine_check.mjs so we can ask, independently of
+// the gate's engine, whether an optimized SVG still matches its original.
+
+function ensureSize(svg, size) {
+  return svg.replace(/<svg\b([^>]*)>/i, (m, a) => {
+    if (/\bwidth\s*=/.test(a) && /\bheight\s*=/.test(a)) return m;
+    const vb = /viewBox\s*=\s*"[\s,]*([-\d.]+)[\s,]+([-\d.]+)[\s,]+([-\d.]+)[\s,]+([-\d.]+)/i.exec(a);
+    const w = vb ? parseFloat(vb[3]) : size, h = vb ? parseFloat(vb[4]) : size;
+    return `<svg${a} width="${w}" height="${h}">`;
+  });
+}
+
+async function raster(svg, size) {
+  const img = new Image();
+  img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(ensureSize(svg, size));
+  await img.decode();
+  const c = document.createElement("canvas"); c.width = c.height = size;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  const iw = img.naturalWidth || size, ih = img.naturalHeight || size;
+  const s = Math.min(size / iw, size / ih) || 1;
+  const w = Math.max(1, Math.round(iw * s)), h = Math.max(1, Math.round(ih * s));
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, size, size);
+  ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+  const d = ctx.getImageData(0, 0, size, size).data;
+  const g = new Float64Array(size * size);
+  for (let i = 0, j = 0; i < size * size; i++, j += 4)
+    g[i] = 0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2];
+  return g;
+}
+
+function integral(arr, N) {
+  const S = N + 1, I = new Float64Array(S * S);
+  for (let y = 0; y < N; y++) {
+    let row = 0;
+    for (let x = 0; x < N; x++) { row += arr[y * N + x]; I[(y + 1) * S + (x + 1)] = I[y * S + (x + 1)] + row; }
+  }
+  return I;
+}
+function wsum(I, N, x0, y0, x1, y1) { const S = N + 1; return I[y1 * S + x1] - I[y0 * S + x1] - I[y1 * S + x0] + I[y0 * S + x0]; }
+
+function ssim(a, b, N) {
+  const win = 8, C1 = 6.5025, C2 = 58.5225, n = N * N;
+  const aa = new Float64Array(n), bb = new Float64Array(n), ab = new Float64Array(n);
+  for (let i = 0; i < n; i++) { aa[i] = a[i] * a[i]; bb[i] = b[i] * b[i]; ab[i] = a[i] * b[i]; }
+  const Ia = integral(a, N), Ib = integral(b, N), Iaa = integral(aa, N), Ibb = integral(bb, N), Iab = integral(ab, N);
+  let total = 0, count = 0, np = win * win;
+  for (let y = 0; y + win <= N; y += win) {
+    for (let x = 0; x + win <= N; x += win) {
+      const ma = wsum(Ia, N, x, y, x + win, y + win) / np, mb = wsum(Ib, N, x, y, x + win, y + win) / np;
+      const va = wsum(Iaa, N, x, y, x + win, y + win) / np - ma * ma;
+      const vb = wsum(Ibb, N, x, y, x + win, y + win) / np - mb * mb;
+      const cov = wsum(Iab, N, x, y, x + win, y + win) / np - ma * mb;
+      total += ((2 * ma * mb + C1) * (2 * cov + C2)) / ((ma * ma + mb * mb + C1) * (va + vb + C2));
+      count++;
+    }
+  }
+  return count ? total / count : 1;
+}
+
+window.measure = async (origSvg, optSvg, size) => {
+  const a = await raster(origSvg, size), b = await raster(optSvg, size);
+  return ssim(a, b, size);
+};
+window.judgeReady = true;
+</script>

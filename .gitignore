@@ -8,3 +8,9 @@ build/
 .venv/
 venv/
 demo/experiment_results/
+
+# parity-test generated artifacts (regenerate locally; not for VCS)
+tests/parity/out/
+tests/parity/*_results.json
+node_modules/
+package-lock.json

@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SVGym — local pipeline (canvas-gated)</title>
+<!-- Enables crossOriginIsolated / SharedArrayBuffer on static hosts (GitHub
+     Pages). On a server that already sends COOP/COEP (our test runner), this is
+     a no-op. Must load before the boot script. -->
+<script src="coi-serviceworker.js"></script>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+  textarea { width: 100%; height: 160px; font-family: monospace; }
+  #status { padding: .4rem .6rem; border-radius: 6px; background: #eee; display: inline-block; }
+  pre { background: #f6f6f6; padding: .6rem; overflow: auto; }
+</style>
+</head>
+<body>
+  <h1>SVGym — local pipeline (canvas-gated)</h1>
+  <p id="status">starting…</p>
+  <p>Runs entirely in this tab; every gate step is verified against your browser's own rendering.</p>
+  <textarea id="svg" placeholder="<svg …>…</svg>"></textarea>
+  <p>
+    <label>Level
+      <select id="level"><option>lossless</option><option selected>conservative</option><option>aggressive</option></select>
+    </label>
+    <button id="go" disabled>Optimize</button>
+  </p>
+  <pre id="out"></pre>
+
+  <script>
+  (() => {
+    const statusEl = document.getElementById("status");
+    const SIZE = 512;
+    let worker, CTRL, DATA, ctx, pending = {}, runId = 0;
+
+    function setStatus(t) { statusEl.textContent = t; }
+
+    async function boot() {
+      if (!self.crossOriginIsolated) {
+        // coi-serviceworker.js will register + reload to apply isolation headers.
+        setStatus("enabling cross-origin isolation (reloading)…");
+        return;
+      }
+      const sab = new SharedArrayBuffer(32 * 1024 * 1024);
+      CTRL = new Int32Array(sab, 0, 16);
+      DATA = new Uint8Array(sab, 64);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = SIZE;
+      ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+      worker = new Worker("svgym-worker.js");
+      worker.onmessage = onWorkerMessage;
+      const base = new URL("../../svgym", location.href).href;  // svgym-public/svgym
+      worker.postMessage({ type: "init", sab, base });
+      setStatus("booting Pyodide…");
+    }
+
+    // Give the SVG explicit width/height (from viewBox if missing) so the <img>
+    // has a definite intrinsic size, then render aspect-preserving onto a white
+    // SIZExSIZE canvas (matches the gate's square, letterboxed convention).
+    function ensureSize(svg) {
+      return svg.replace(/<svg\b([^>]*)>/i, (m, a) => {
+        if (/\bwidth\s*=/.test(a) && /\bheight\s*=/.test(a)) return m;
+        const vb = /viewBox\s*=\s*"[\s,]*([-\d.]+)[\s,]+([-\d.]+)[\s,]+([-\d.]+)[\s,]+([-\d.]+)/i.exec(a);
+        const w = vb ? parseFloat(vb[3]) : SIZE, h = vb ? parseFloat(vb[4]) : SIZE;
+        return `<svg${a} width="${w}" height="${h}">`;
+      });
+    }
+
+    async function rasterize(svg, size) {
+      const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(ensureSize(svg));
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      const iw = img.naturalWidth || size, ih = img.naturalHeight || size;
+      const scale = Math.min(size / iw, size / ih) || 1;
+      const w = Math.max(1, Math.round(iw * scale)), h = Math.max(1, Math.round(ih * scale));
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, size, size);
+      ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+      const px = ctx.getImageData(0, 0, size, size).data;   // RGBA
+      const rgb = new Uint8Array(size * size * 3);
+      for (let i = 0, j = 0, k = 0; i < size * size; i++) {
+        rgb[k++] = px[j]; rgb[k++] = px[j + 1]; rgb[k++] = px[j + 2]; j += 4;
+      }
+      return rgb;
+    }
+
+    async function onWorkerMessage(e) {
+      const d = e.data;
+      if (d.type === "render") {
+        try {
+          const len = Atomics.load(CTRL, 1), size = Atomics.load(CTRL, 2);
+          // .slice() copies out of the SharedArrayBuffer; TextDecoder rejects shared views.
+          const svg = new TextDecoder().decode(DATA.slice(0, len));
+          const rgb = await rasterize(svg, size);
+          DATA.set(rgb, 0);
+          Atomics.store(CTRL, 3, rgb.length);
+          Atomics.store(CTRL, 0, 2);            // done-ok
+        } catch (err) {
+          if (!window.__renderErrLogged) { window.__renderErrLogged = true; console.error("[rasterize] " + (err && err.stack || err)); }
+          Atomics.store(CTRL, 0, 3);            // done-error
+        }
+        Atomics.notify(CTRL, 0);
+      } else if (d.type === "ready") {
+        console.warn("[selftest] render bridge: " + d.selftest);
+        setStatus("ready — runs fully locally, verified against your browser");
+        document.getElementById("go").disabled = false;
+        window.svgymReady = true;
+      } else if (d.type === "result") {
+        const p = pending[d.id]; delete pending[d.id];
+        if (!p) return;
+        d.error ? p.reject(new Error(d.error)) : p.resolve(d.result);
+      } else if (d.type === "error") {
+        window.svgymError = d.error;
+        setStatus("init failed: " + d.error);
+        console.error(d.error);
+      }
+    }
+
+    window.runPipeline = (svg, level = "conservative") => new Promise((resolve, reject) => {
+      const id = ++runId; pending[id] = { resolve, reject };
+      worker.postMessage({ type: "run", id, svg, level });
+    });
+
+    document.getElementById("go").addEventListener("click", async () => {
+      const svg = document.getElementById("svg").value;
+      const level = document.getElementById("level").value;
+      const t0 = performance.now();
+      try {
+        const r = await window.runPipeline(svg, level);
+        const ms = Math.round(performance.now() - t0);
+        document.getElementById("out").textContent =
+          `size ${r.size} B   ssim ${r.ssim}   psnr ${r.psnr}   steps ${r.decisions.length}   ${ms} ms\n\n`
+          + r.optimized_svg.slice(0, 4000);
+      } catch (e) { document.getElementById("out").textContent = "error: " + e; }
+    });
+
+    boot();
+  })();
+  </script>
+</body>
+</html>

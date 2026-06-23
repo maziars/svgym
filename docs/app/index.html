@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SVGym — optimize your own SVG (100% local)</title>
+<meta name="description" content="Compress an SVG beyond SVGO entirely in your browser. Nothing is uploaded.">
+<!-- Enables SharedArrayBuffer on GitHub Pages; scoped to this folder only. -->
+<script src="coi-serviceworker.js"></script>
+<style>
+  :root { --blue:#1a73e8; --green:#188038; --ink:#202124; --mut:#5f6368; --line:#e3e6ea; --bg:#fff; --soft:#f6f8fa; }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.55 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: var(--ink);
+         margin: 0; background: var(--bg); }
+  a { color: var(--blue); }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 28px 20px 64px; }
+  .back { font-size: 13px; color: var(--mut); text-decoration: none; }
+  h1 { font-size: 1.7rem; margin: 14px 0 4px; }
+  .sub { color: var(--mut); margin: 0 0 18px; }
+  .privacy { display:inline-flex; align-items:center; gap:8px; font-size:13px; color:var(--green);
+             background:#e6f4ea; border:1px solid #ceead6; border-radius:999px; padding:5px 12px; }
+  .drop { margin: 20px 0 8px; border: 2px dashed var(--line); border-radius: 12px; background: var(--soft);
+          padding: 34px 20px; text-align: center; transition: .15s; cursor: pointer; }
+  .drop.drag { border-color: var(--blue); background: #eef4ff; }
+  .drop p { margin: 6px 0; color: var(--mut); }
+  .drop strong { color: var(--ink); }
+  .btn { font: inherit; border: 1px solid var(--line); background: #fff; border-radius: 8px;
+         padding: 8px 14px; cursor: pointer; }
+  .btn:hover { background: var(--soft); }
+  .btn.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .btn.primary:disabled { background: #b9c6dc; border-color: #b9c6dc; cursor: not-allowed; }
+  .row { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; margin: 14px 0; }
+  .levels label { display:inline-flex; align-items:center; gap:6px; margin-right:14px; font-size:14px; }
+  .cond { color: var(--mut); font-size: 12px; }
+  .panes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
+  @media (max-width:640px){ .panes{ grid-template-columns:1fr; } }
+  .pane { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .pane h3 { margin: 0; padding: 10px 14px; font-size: 13px; color: var(--mut); border-bottom: 1px solid var(--line);
+             display:flex; justify-content:space-between; align-items:center; }
+  .canvasbox { background: repeating-conic-gradient(#f0f0f0 0% 25%, #fff 0% 50%) 50% / 18px 18px;
+               display:flex; align-items:center; justify-content:center; min-height: 220px; padding: 14px; }
+  .canvasbox img { max-width: 100%; max-height: 260px; }
+  .stat { display:flex; gap:18px; flex-wrap:wrap; padding: 12px 14px; font-size: 14px; }
+  .stat b { font-variant-numeric: tabular-nums; }
+  .saved { color: var(--green); font-weight: 700; }
+  #status { font-size: 13px; color: var(--mut); min-height: 18px; }
+  .muted { color: var(--mut); font-size: 13px; }
+  textarea { width: 100%; height: 120px; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+             border: 1px solid var(--line); border-radius: 8px; padding: 8px; display:none; }
+  .toggle { background:none; border:none; color: var(--blue); cursor:pointer; font: inherit; padding:0; }
+  footer { margin-top: 40px; color: var(--mut); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="../index.html">← SVGym demo</a>
+  <h1>Optimize your own SVG</h1>
+  <p class="sub">The deterministic pipeline runs <strong>entirely in your browser</strong>, verifying every change against your browser's own rendering.</p>
+  <span class="privacy">🔒 Nothing is uploaded — your SVG never leaves this tab.</span>
+
+  <div id="drop" class="drop">
+    <p><strong>Drop an .svg here</strong>, or <button id="browse" class="btn">choose a file</button></p>
+    <p>or <button id="pasteToggle" class="toggle">paste SVG markup</button></p>
+    <input id="file" type="file" accept=".svg,image/svg+xml" hidden>
+    <textarea id="paste" placeholder="<svg …>…</svg>"></textarea>
+  </div>
+
+  <div class="row">
+    <span class="levels">
+      <label><input type="radio" name="level" value="lossless"> Lossless <span class="cond">SSIM = 1</span></label>
+      <label><input type="radio" name="level" value="conservative" checked> Conservative <span class="cond">SSIM ≥ 0.99</span></label>
+      <label><input type="radio" name="level" value="aggressive"> Aggressive <span class="cond">SSIM ≥ 0.97</span></label>
+    </span>
+    <button id="go" class="btn primary" disabled>Optimize</button>
+    <span id="status">starting…</span>
+  </div>
+  <p class="muted">Lossless: structurally identical. Conservative: SSIM ≥ 0.99 (visually identical). Aggressive: SSIM ≥ 0.97 (pushes harder). Every step is rendered and reverted if it drops below the bar. (The optional AI mode and the SVGO pre-pass are CLI-only; this is the deterministic pipeline.)</p>
+
+  <div class="panes" id="panes" style="display:none">
+    <div class="pane">
+      <h3><span>Original</span><span id="origDims" class="muted"></span></h3>
+      <div class="canvasbox"><img id="origImg" alt="original"></div>
+      <div class="stat"><span>Size <b id="origSize">—</b></span></div>
+    </div>
+    <div class="pane">
+      <h3><span>Optimized</span><span id="optMeta" class="muted"></span></h3>
+      <div class="canvasbox"><img id="optImg" alt="optimized"></div>
+      <div class="stat">
+        <span>Size <b id="optSize">—</b></span>
+        <span class="muted" id="ssim"></span>
+        <span class="saved" id="savedOrig"></span>
+        <span class="saved" id="savedSvgo"></span>
+        <button id="download" class="btn" disabled>Download</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>Built on Pyodide + your browser's canvas. Same deterministic pipeline as the <a href="https://github.com/maziars/svgym">SVGym CLI</a>.</footer>
+</div>
+
+<script>
+(() => {
+  const SIZE = 512;
+  const $ = id => document.getElementById(id);
+  const statusEl = $("status");
+  let worker, CTRL, DATA, ctx, pending = {}, runId = 0, engineReady = false;
+  let currentSvg = null, currentName = "image.svg";
+  let lastBlobUrls = [];
+
+  const fmt = n => n < 1024 ? n + " B" : (n/1024).toFixed(1) + " KB";
+  const bytes = s => new TextEncoder().encode(s).length;
+
+  // SVGO's own browser build, for the "beyond SVGO" baseline. SVGO's output is
+  // the same regardless of the SVGym level, so compute it once per file and
+  // cache it (the pipeline's internal svgo_size is gated per level and not the
+  // right thing to display here).
+  const SVGO_URL = "https://cdn.jsdelivr.net/npm/svgo@3.3.2/dist/svgo.browser.js";
+  let _svgoOptimize = null, svgoCache = { svg: null, data: null, size: null };
+  async function svgoFor(svg) {
+    if (svgoCache.svg === svg) return svgoCache;
+    let data = null, size = null;
+    try {
+      if (!_svgoOptimize) _svgoOptimize = (await import(SVGO_URL)).optimize;
+      data = _svgoOptimize(svg, { multipass: true }).data;
+      size = bytes(data);
+    } catch (e) { console.warn("svgo failed:", e); }
+    svgoCache = { svg, data, size };
+    return svgoCache;
+  }
+
+  // ---------- engine boot (worker + canvas bridge) ----------
+  async function boot() {
+    if (!self.crossOriginIsolated) { statusEl.textContent = "preparing…"; return; } // coi sw reloads
+    const sab = new SharedArrayBuffer(32 * 1024 * 1024);
+    CTRL = new Int32Array(sab, 0, 16);
+    DATA = new Uint8Array(sab, 64);
+    const c = document.createElement("canvas"); c.width = c.height = SIZE;
+    ctx = c.getContext("2d", { willReadFrequently: true });
+    worker = new Worker("svgym-worker.js");
+    worker.onmessage = onMsg;
+    worker.postMessage({ type: "init", sab, base: new URL("svgym", location.href).href });
+    statusEl.textContent = "loading optimizer engine (one-time)…";
+  }
+
+  function ensureSize(svg) {
+    return svg.replace(/<svg\b([^>]*)>/i, (m, a) => {
+      if (/\bwidth\s*=/.test(a) && /\bheight\s*=/.test(a)) return m;
+      const vb = /viewBox\s*=\s*"[\s,]*([-\d.]+)[\s,]+([-\d.]+)[\s,]+([-\d.]+)[\s,]+([-\d.]+)/i.exec(a);
+      const w = vb ? parseFloat(vb[3]) : SIZE, h = vb ? parseFloat(vb[4]) : SIZE;
+      return `<svg${a} width="${w}" height="${h}">`;
+    });
+  }
+  async function rasterize(svg, size) {
+    const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(ensureSize(svg));
+    const img = new Image(); img.src = url; await img.decode();
+    const iw = img.naturalWidth || size, ih = img.naturalHeight || size;
+    const s = Math.min(size/iw, size/ih) || 1;
+    const w = Math.max(1, Math.round(iw*s)), h = Math.max(1, Math.round(ih*s));
+    ctx.fillStyle = "#fff"; ctx.fillRect(0,0,size,size);
+    ctx.drawImage(img, (size-w)/2, (size-h)/2, w, h);
+    const px = ctx.getImageData(0,0,size,size).data;
+    const rgb = new Uint8Array(size*size*3);
+    for (let i=0,j=0,k=0;i<size*size;i++){ rgb[k++]=px[j];rgb[k++]=px[j+1];rgb[k++]=px[j+2]; j+=4; }
+    return rgb;
+  }
+  async function onMsg(e) {
+    const d = e.data;
+    if (d.type === "render") {
+      try {
+        const len = Atomics.load(CTRL,1), size = Atomics.load(CTRL,2);
+        const svg = new TextDecoder().decode(DATA.slice(0, len)); // .slice: TextDecoder rejects shared
+        const rgb = await rasterize(svg, size);
+        DATA.set(rgb, 0); Atomics.store(CTRL,3,rgb.length); Atomics.store(CTRL,0,2);
+      } catch (err) { Atomics.store(CTRL,0,3); }
+      Atomics.notify(CTRL,0);
+    } else if (d.type === "ready") {
+      engineReady = true; statusEl.textContent = currentSvg ? "ready" : "ready — drop an SVG to start";
+      refreshGo();
+    } else if (d.type === "result") {
+      const p = pending[d.id]; delete pending[d.id];
+      if (p) (d.error ? p.reject(new Error(d.error)) : p.resolve(d.result));
+    } else if (d.type === "error") {
+      statusEl.textContent = "engine failed to load: " + d.error;
+    }
+  }
+  const runPipeline = (svg, level, svgo) => new Promise((res, rej) => {
+    const id = ++runId; pending[id] = { resolve: res, reject: rej };
+    worker.postMessage({ type: "run", id, svg, level, svgo });
+  });
+
+  // ---------- input handling ----------
+  function preview(el, svg) {
+    const u = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+    lastBlobUrls.push(u); el.src = u;
+  }
+  function loadSvg(text, name) {
+    if (!/<svg[\s>]/i.test(text)) { statusEl.textContent = "that doesn't look like an SVG."; return; }
+    currentSvg = text; currentName = (name || "image.svg").replace(/\.svg$/i, "");
+    $("panes").style.display = "grid";
+    preview($("origImg"), text);
+    $("origSize").textContent = fmt(bytes(text));
+    const vb = /viewBox\s*=\s*"([^"]+)"/i.exec(text);
+    $("origDims").textContent = vb ? vb[1].split(/[\s,]+/).slice(2).join("×") : "";
+    $("optImg").src = ""; $("optSize").textContent = "—"; $("savedOrig").textContent = ""; $("savedSvgo").textContent = "";
+    $("ssim").textContent = ""; $("optMeta").textContent = ""; $("download").disabled = true;
+    statusEl.textContent = engineReady ? "ready" : "loading optimizer engine…";
+    refreshGo();
+  }
+  function refreshGo(){ $("go").disabled = !(engineReady && currentSvg); }
+
+  const drop = $("drop");
+  ["dragenter","dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("drag"); }));
+  ["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("drag"); }));
+  drop.addEventListener("drop", e => { const f = e.dataTransfer.files[0]; if (f) f.text().then(t => loadSvg(t, f.name)); });
+  $("browse").addEventListener("click", e => { e.stopPropagation(); $("file").click(); });
+  drop.addEventListener("click", () => $("file").click());
+  $("file").addEventListener("change", e => { const f = e.target.files[0]; if (f) f.text().then(t => loadSvg(t, f.name)); });
+  $("pasteToggle").addEventListener("click", e => { e.stopPropagation();
+    const ta = $("paste"); ta.style.display = ta.style.display === "block" ? "none" : "block"; ta.focus(); });
+  $("paste").addEventListener("click", e => e.stopPropagation());
+  $("paste").addEventListener("input", e => { if (e.target.value.trim()) loadSvg(e.target.value, "pasted.svg"); });
+
+  // ---------- run ----------
+  $("go").addEventListener("click", async () => {
+    if (!currentSvg || !engineReady) return;
+    const level = document.querySelector('input[name=level]:checked').value;
+    $("go").disabled = true; statusEl.textContent = "optimizing…";
+    const t0 = performance.now();
+    try {
+      const sv = await svgoFor(currentSvg);                 // raw SVGO output (cached, level-independent)
+      const r = await runPipeline(currentSvg, level, sv.data); // hand the SVGO baseline to the pipeline
+      const ms = Math.round(performance.now() - t0);
+      preview($("optImg"), r.optimized_svg);
+      const inB = bytes(currentSvg), outB = r.size;
+      $("optSize").textContent = fmt(outB);
+      const pctO = inB ? Math.round((1 - outB/inB) * 100) : 0;
+      $("savedOrig").textContent = pctO > 0 ? `−${pctO}% vs original` : "no gain vs original";
+      $("ssim").textContent = "SSIM " + (r.ssim ?? "—");
+      const sB = sv.size;
+      if (sB && sB > 0) {
+        const pctS = Math.round((1 - outB / sB) * 100);
+        const sq = (r.svgo_ssim != null) ? `, SSIM ${r.svgo_ssim}` : "";
+        $("savedSvgo").textContent = (pctS >= 0 ? `−${pctS}%` : `+${-pctS}%`) + ` vs SVGO (${fmt(sB)}${sq})`;
+      } else { $("savedSvgo").textContent = ""; }
+      $("optMeta").textContent = ms + " ms";
+      const dl = $("download"); dl.disabled = false;
+      dl.onclick = () => {
+        const u = URL.createObjectURL(new Blob([r.optimized_svg], { type: "image/svg+xml" }));
+        const a = document.createElement("a"); a.href = u; a.download = currentName + ".min.svg"; a.click();
+        setTimeout(() => URL.revokeObjectURL(u), 4000);
+      };
+      statusEl.textContent = "done";
+    } catch (e) { statusEl.textContent = "error: " + e.message; }
+    refreshGo();
+  });
+
+  boot();
+})();
+</script>
+</body>
+</html>
