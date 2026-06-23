@@ -12,7 +12,10 @@
 //   CTRL[2] render size (px, square)
 //   CTRL[3] output RGB byte length (= size*size*3)
 
-const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.26.2/full/";
+const PYVER = "0.26.2";
+const PYODIDE_CDN = `https://cdn.jsdelivr.net/pyodide/v${PYVER}/full/`;
+const PYODIDE_LOCAL = new URL("pyodide/", location.href).href; // self-hosted, same-origin (service-worker cached)
+let PYODIDE = PYODIDE_LOCAL;                                    // resolved in init(): local if built, else CDN
 const MODULES = ["__init__.py", "config.py", "tools.py", "deterministic.py"];
 const RENDER_SIZE = 512;
 
@@ -36,12 +39,19 @@ async function init(sab, base) {
   CTRL = new Int32Array(sab, 0, 16);
   DATA = new Uint8Array(sab, 64);
 
+  // Prefer self-hosted Pyodide (same-origin, cached by the service worker for
+  // instant repeat loads). Fall back to the CDN if pyodide/ hasn't been built
+  // and deployed yet, so the page never hard-fails on a missing local copy.
+  try {
+    const probe = await fetch(PYODIDE_LOCAL + "pyodide-lock.json", { method: "HEAD" });
+    PYODIDE = probe.ok ? PYODIDE_LOCAL : PYODIDE_CDN;
+  } catch (e) { PYODIDE = PYODIDE_CDN; }
+
   importScripts(PYODIDE + "pyodide.js");
   pyodide = await loadPyodide({ indexURL: PYODIDE });
   await pyodide.loadPackage(["numpy", "scipy"]);
   try {
-    await pyodide.loadPackage("micropip");
-    await pyodide.runPythonAsync('import micropip; await micropip.install("fonttools")');
+    await pyodide.loadPackage("fonttools");   // local/Pyodide wheel; no PyPI round-trip
   } catch (e) { /* font subsetting is optional */ }
 
   pyodide.FS.mkdirTree("/pkg/svgym");

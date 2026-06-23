@@ -5,14 +5,44 @@
 
 const coepCredentialless = true;
 
+// Self-hosted Pyodide artifacts (runtime + numpy/scipy/fonttools wheels) are
+// immutable per version, so we cache-first them in Cache Storage. The HTTP cache
+// can be evicted; this keeps repeat visits instant even across sessions. Bump the
+// version suffix to invalidate when PYVER changes.
+const PYODIDE_CACHE = "svgym-pyodide-v0.26.2";
+const isPyodideAsset = (url) =>
+  url.origin === self.location.origin && url.pathname.includes("/pyodide/");
+
 if (typeof window === "undefined") {
   // ---- running as the service worker ----
   self.addEventListener("install", () => self.skipWaiting());
-  self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
+  self.addEventListener("activate", (e) => e.waitUntil((async () => {
+    // drop caches from older Pyodide versions
+    const names = await caches.keys();
+    await Promise.all(names
+      .filter((n) => n.startsWith("svgym-pyodide-") && n !== PYODIDE_CACHE)
+      .map((n) => caches.delete(n)));
+    await self.clients.claim();
+  })()));
 
   self.addEventListener("fetch", (event) => {
     const r = event.request;
     if (r.cache === "only-if-cached" && r.mode !== "same-origin") return;
+
+    const url = new URL(r.url);
+
+    // Cache-first for the self-hosted Pyodide artifacts.
+    if (r.method === "GET" && isPyodideAsset(url)) {
+      event.respondWith((async () => {
+        const cache = await caches.open(PYODIDE_CACHE);
+        const hit = await cache.match(r);
+        if (hit) return hit;
+        const resp = await fetch(r);
+        if (resp && resp.ok && resp.status === 200) cache.put(r, resp.clone());
+        return resp;
+      })());
+      return;
+    }
 
     const request = (coepCredentialless && r.mode === "no-cors")
       ? new Request(r, { credentials: "omit" })
