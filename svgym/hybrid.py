@@ -65,13 +65,24 @@ def optimize_svg_hybrid(svg_text: str, level: str = "conservative",
         det_result["llm_elapsed"] = 0
         return det_result
 
-    # Step 2: LLM pass, starting from deterministic result
-    llm_result = optimize_svg_llm(
-        svg_text,
-        level=level,
-        thinking_budget=thinking_budget,
-        det_result=det_result,
-    )
+    # Step 2: LLM pass, starting from deterministic result.
+    # The AI pass is optional: a missing key, network failure, or any provider
+    # error must never lose the (already computed) deterministic result.
+    try:
+        llm_result = optimize_svg_llm(
+            svg_text,
+            level=level,
+            thinking_budget=thinking_budget,
+            det_result=det_result,
+        )
+    except Exception as e:
+        print(f"Warning: AI pass failed ({type(e).__name__}: {e}); "
+              f"using the deterministic result.", file=sys.stderr)
+        det_result["mode"] = "deterministic"
+        det_result["det_compression_pct"] = det_pct
+        det_result["det_elapsed"] = det_elapsed
+        det_result["llm_elapsed"] = 0
+        return det_result
 
     # Use whichever result is smaller
     if llm_result["compressed_size"] < det_result["compressed_size"]:

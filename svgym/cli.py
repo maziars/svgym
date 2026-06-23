@@ -43,14 +43,14 @@ def discover_packs(input_dir: Path) -> dict[str, list[tuple[str, str]]]:
     # Root-level SVGs
     root_svgs = sorted(input_dir.glob("*.svg"))
     if root_svgs:
-        packs[input_dir.name] = [(f.name, f.read_text()) for f in root_svgs]
+        packs[input_dir.name] = [(f.name, f.read_text(errors="replace")) for f in root_svgs]
 
     # Subdirectory SVGs (one level deep)
     for subdir in sorted(input_dir.iterdir()):
         if subdir.is_dir():
             sub_svgs = sorted(subdir.glob("*.svg"))
             if sub_svgs:
-                packs[subdir.name] = [(f.name, f.read_text()) for f in sub_svgs]
+                packs[subdir.name] = [(f.name, f.read_text(errors="replace")) for f in sub_svgs]
 
     return packs
 
@@ -160,6 +160,10 @@ def run_optimize(args: argparse.Namespace) -> int:
     if not in_path.exists():
         print(f"Error: {in_path} not found", file=sys.stderr)
         return 1
+    if not in_path.is_file():
+        print(f"Error: {in_path} is not a file (use 'svgym pack' for a directory)",
+              file=sys.stderr)
+        return 1
     svg = in_path.read_text(errors="replace")
     orig = len(svg.encode("utf-8"))
 
@@ -183,7 +187,11 @@ def run_optimize(args: argparse.Namespace) -> int:
             size_gate=size_gate,
             original_size=orig,
         )
-        mode = "AI (always-on)" if args.ai_always else "AI hybrid"
+        # Reflect what actually ran: the hybrid returns mode="deterministic" when
+        # the AI was gated out or fell back (e.g. no key / network error).
+        mode = result.get("mode", "hybrid")
+        if mode == "hybrid":
+            mode = "AI (always-on)" if args.ai_always else "AI hybrid"
     else:
         from svgym.deterministic import optimize_svg_deterministic
         result = optimize_svg_deterministic(svg, level=args.level)

@@ -6,6 +6,8 @@ SVGym applies a routed pipeline of ~40 small transforms (distilled from LLM roll
 
 Where SVGO applies a fixed plugin list to every file, SVGym profiles each file and adapts.
 
+Run it on a single file, or point it at a whole icon set. `svgym pack` optimizes every SVG in a folder with cross-file analysis, and emits a combined `<symbol>` **sprite sheet** plus a compression report — so it drops into an icon pipeline, not just one-off files.
+
 ## Showcase
 
 ▶ **[Live interactive demo](https://maziars.github.io/svgym/)** — before/after across the full demo set (activates once GitHub Pages is enabled for this repo).
